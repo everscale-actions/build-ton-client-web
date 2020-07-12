@@ -1,0 +1,93 @@
+name: Build and release TON Client Web
+
+on: 
+  push:
+  workflow_dispatch:
+  schedule:    
+    - cron:  '0 0 * * *'
+
+env:
+  REPO_OWNER: tonlabs
+  REPO_NAME: TON-SDK
+
+jobs:
+  build-n-release:
+    runs-on: ubuntu-latest
+    steps:          
+      - name: Check for new commits
+        uses: actions/github-script@v2
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          result-encoding: string
+          script: |
+            var { data: { tag_name: sdkLatestReleaseTag, html_url: sdkLatestReleaseLink } } = await github.repos.getLatestRelease({
+              owner: process.env.REPO_OWNER,
+              repo: process.env.REPO_NAME,
+            })
+              
+            core.exportVariable('SOURCE_REPO_RELEASE_TAG', sdkLatestReleaseTag)            
+            core.exportVariable('SOURCE_REPO_RELEASE_LINK', sdkLatestReleaseLink)
+
+            try {
+              var { data: { tag_name: latestReleaseTag } } = await github.repos.getLatestRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              })
+            } catch (e) {              
+              if (e.name == 'HttpError' && e.status == 404) {
+                latestReleaseTag = null
+              } else { throw e; }              
+            }            
+
+            core.exportVariable('IS_NEW_RELEASE', sdkLatestReleaseTag !== latestReleaseTag)
+            
+      - name: Check out
+        if: ${{ env.IS_NEW_RELEASE == 'true' }}
+        uses: actions/checkout@v2
+        with:
+          repository: ${{env.REPO_OWNER}}/${{env.REPO_NAME}}
+          ref: ${{ env.SOURCE_REPO_RELEASE_TAG }}
+          
+      - name: Install dependencies
+        if: ${{ env.IS_NEW_RELEASE == 'true' }}
+        run: |
+          sudo apt update -y          
+          sudo apt install -y nodejs
+          sudo apt install -y cargo
+          sudo curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh          
+          
+      - name: Build
+        if: ${{ env.IS_NEW_RELEASE == 'true' }}
+        run: |
+          cd ton_client/platforms/ton-client-web
+          nodejs build.js
+      
+      - name: Prepare release assets
+        if: ${{ env.IS_NEW_RELEASE == 'true' }}
+        run: |          
+          cd ton_client/platforms/ton-client-web/pkg
+          tar -czvf $GITHUB_WORKSPACE/ton_client_web.tar.gz *
+          
+      - name: Create Release
+        if: ${{ env.IS_NEW_RELEASE == 'true' }}
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.SOURCE_REPO_RELEASE_TAG }}
+          release_name: TON Client Web ${{ env.SOURCE_REPO_RELEASE_TAG }}
+          body: "Source tag: ${{ env.SOURCE_REPO_RELEASE_LINK }}"
+          draft: false
+          prerelease: false
+          
+      - name: Upload Release Asset [ton_client_web]
+        if: ${{ env.IS_NEW_RELEASE == 'true' }}        
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ton_client_web.tar.gz
+          asset_name: ton_client_web.tar.gz
+          asset_content_type: application/tar+gzip
