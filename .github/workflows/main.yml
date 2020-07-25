@@ -9,6 +9,7 @@ on:
 env:
   REPO_OWNER: tonlabs
   REPO_NAME: TON-SDK
+  REPO_BRANCH: master
 
 jobs:
   build-n-release:
@@ -20,13 +21,16 @@ jobs:
           github-token: ${{secrets.GITHUB_TOKEN}}
           result-encoding: string
           script: |
-            var { data: { tag_name: sdkLatestReleaseTag, html_url: sdkLatestReleaseLink } } = await github.repos.getLatestRelease({
+            const { data: { commit: { sha, html_url } } } = await github.repos.getBranch({
               owner: process.env.REPO_OWNER,
               repo: process.env.REPO_NAME,
+              branch: process.env.REPO_BRANCH,
             })
-              
-            core.exportVariable('SOURCE_REPO_RELEASE_TAG', sdkLatestReleaseTag)            
-            core.exportVariable('SOURCE_REPO_RELEASE_LINK', sdkLatestReleaseLink)
+
+            const shaShort = sha.substr(0, 12)  
+            core.exportVariable('SOURCE_REPO_SHA', sha)
+            core.exportVariable('SOURCE_REPO_SHA_SHORT', shaShort)
+            core.exportVariable('SOURCE_REPO_COMMIT_LINK', html_url)
 
             try {
               var { data: { tag_name: latestReleaseTag } } = await github.repos.getLatestRelease({
@@ -39,14 +43,16 @@ jobs:
               } else { throw e; }              
             }            
 
-            core.exportVariable('IS_NEW_RELEASE', sdkLatestReleaseTag !== latestReleaseTag)
+            core.info(latestReleaseTag+ " - " +shaShort)
+
+            core.exportVariable('IS_NEW_RELEASE', shaShort !== latestReleaseTag)
             
       - name: Check out
         if: ${{ env.IS_NEW_RELEASE == 'true' }}
         uses: actions/checkout@v2
         with:
           repository: ${{env.REPO_OWNER}}/${{env.REPO_NAME}}
-          ref: ${{ env.SOURCE_REPO_RELEASE_TAG }}
+          ref: ${{ env.SOURCE_REPO_SHA }}
           
       - name: Install dependencies
         if: ${{ env.IS_NEW_RELEASE == 'true' }}
@@ -75,9 +81,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ env.SOURCE_REPO_RELEASE_TAG }}
-          release_name: TON Client Web ${{ env.SOURCE_REPO_RELEASE_TAG }}
-          body: "Source tag: ${{ env.SOURCE_REPO_RELEASE_LINK }}"
+          tag_name: ${{ env.SOURCE_REPO_SHA_SHORT }}
+          release_name: TON Client Web ${{ env.SOURCE_REPO_SHA_SHORT }}
+          body: "Source commit: ${{ env.SOURCE_REPO_COMMIT_LINK }}"
           draft: false
           prerelease: false
           
